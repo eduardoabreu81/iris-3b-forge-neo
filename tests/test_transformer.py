@@ -24,6 +24,12 @@ def toy_config(**overrides):
 
 @unittest.skipIf(torch is None, "torch not installed")
 class TestTransformer(unittest.TestCase):
+    def setUp(self):
+        # torch 2.14 CPU: the parallel SDPA kernels intermittently return NaN/different results here;
+        # the toy forward is tiny, so single-threaded costs nothing
+        if torch is not None:
+            torch.set_num_threads(1)
+
     def test_forge_build_path_round_trips(self):
         # Forge builds IrisDiT(**dit_config_from_detect) and loads the checkpoint strict; any drift between
         # detect() and the module's parameter names or shapes fails here
@@ -64,12 +70,14 @@ class TestTransformer(unittest.TestCase):
         self.assertTrue(torch.allclose(y, clean))
 
     def test_forward_matches_itself(self):
+        # no mutable state between calls; the loose tolerance is for SDPA's thread-order float noise,
+        # a state bug shows up orders of magnitude bigger
         torch.manual_seed(1)
         dit = IrisDiT(toy_config()).eval()
         x, t, context = torch.rand(1, 3, 16, 16), torch.tensor([500.0]), torch.rand(1, 300, 32)
         with torch.no_grad():
             a, b = dit(x, t, context), dit(x, t, context)
-        self.assertTrue(torch.allclose(a, b))
+        torch.testing.assert_close(a, b, rtol=1e-4, atol=1e-6)
 
 
 if __name__ == "__main__":

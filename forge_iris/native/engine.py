@@ -11,6 +11,7 @@ from backend.patcher.clip import CLIP
 from backend.patcher.unet import UnetPatcher
 from backend.patcher.vae import VAE
 
+from ..contracts import raise_pending_error
 from .model import Iris
 from .text_engine import TEXT_LENGTH, IrisTextEngine
 
@@ -45,6 +46,7 @@ class IrisEngine(ForgeDiffusionEngine):
 
     @torch.inference_mode()
     def get_learned_conditioning(self, prompt: list[str]):
+        raise_pending_error()
         memory_management.load_models_gpu([self.forge_objects.clip.patcher])
         return self.text_engine_iris(prompt)
 

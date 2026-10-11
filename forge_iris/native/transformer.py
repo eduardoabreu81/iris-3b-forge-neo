@@ -15,6 +15,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from ..contracts import raise_pending_error
 from . import kernels
 
 
@@ -372,6 +373,7 @@ class IrisDiT(nn.Module):
 
     def forward(self, x, timestep, context, transformer_options={}, **kwargs):
         """Forge's call: x is the RGB image being denoised in [-1, 1], context the preprocessed text stream."""
+        raise_pending_error()
         cfg, p = self.cfg, self.cfg.patch_size
         height, width = x.shape[-2:]
         x = pad_to_patch_size(x, p)

@@ -28,12 +28,17 @@ def attention(q, k, v, mask=None, transformer_options=None):
     """q: [B, Hq, S, D]; k, v: [B, Hkv, S, D] (GQA) -> [B, S, Hq * D].
 
     transformer_options reach Forge's attention wrapper, which applies attention overrides such as the Sparse
-    Attention Integrated extension. With no mask, skip_reshape lets Forge pick its fastest kernel.
+    Attention Integrated extension. The torch fallback pins the MATH backend: the CPU flash kernel of
+    torch 2.14 intermittently produces NaNs with GQA under threads, and the tests only need a correct one.
     """
     if _forge_attention is not None:
         return _forge_attention(q, k, v, q.shape[1], mask=mask, skip_reshape=True,
                                 transformer_options=transformer_options or {})
-    out = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=mask, enable_gqa=q.shape[1] != k.shape[1])
+    from torch.nn.attention import SDPBackend, sdpa_kernel
+
+    with sdpa_kernel(SDPBackend.MATH):
+        out = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=mask,
+                                                               enable_gqa=q.shape[1] != k.shape[1])
     return out.transpose(1, 2).reshape(q.shape[0], q.shape[2], -1)
 
 

@@ -21,7 +21,8 @@ Generate images with **[Iris 3B](https://huggingface.co/speridlabs/iris-3b)** in
 
 ## How it works
 
-- **No VAE** - the loader's VAE slot is answered by an empty stand-in; `decode_first_stage` / `encode_first_stage` are the identity (the same pattern Forge Neo's PiD engine uses), and the sampler's "latent" is the image itself.
+- **No VAE** - the loader's VAE slot is answered by an empty stand-in; `decode_first_stage` / `encode_first_stage` are the identity (as Forge Neo's PiD engine does), and the sampler's "latent" is the image itself.
+- **First pixel-space text-to-image on Forge Neo** - PiD is img2img-only (an upscaler; Forge even refuses its txt2img), so the extension replaces the sampler's noise, which Forge builds as a 1/8-resolution latent, with a full-resolution `(batch, 3, height, width)` RNG - the same mechanism the MiniMax H3 extension uses for its packed latent.
 - **Text encoder for free** - Iris reads the same Qwen3-VL 4B as Krea 2 (the Forge Neo loads it natively; `qwen3vl_4b_bf16.safetensors` from Comfy-Org/Qwen3-VL). The extension's text engine applies the Iris chat template, keeps the last 300 tokens, and runs the checkpoint's layerwise text adapter (12 raw Qwen layers) on the DiT.
 - **INT8 ConvRot builds load as they are** - Forge's Krea 2 branch is the generic DiT loader; the extension swaps its transformer class for one call, inheriting dtype, quantization and device handling. The INT8 checkpoint zero-pads the SwiGLU FFN (6826 → 6912), and the detector reads the width from the shapes, so both builds round-trip exactly.
 - **"Iris" schedule** - the upstream rectified-flow sigma grid with shift 4 (first sigma ≈ 0.999, last 0), registered in Forge's scheduler list.
