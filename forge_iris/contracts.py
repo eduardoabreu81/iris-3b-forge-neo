@@ -18,3 +18,17 @@ def set_pending_error(error):
 def raise_pending_error():
     if _pending_error is not None:
         raise _pending_error
+
+
+# The single-pass task of the current generation (tasks.RESTORE, tasks.DEPTH or None), set by the script before
+# Forge loads the model and read by the DiT's forward.
+_task = None
+
+
+def set_task(task):
+    global _task
+    _task = task
+
+
+def current_task():
+    return _task

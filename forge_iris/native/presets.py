@@ -8,8 +8,9 @@ from modules_forge import presets
 
 PRESET = "iris"
 
-# the base settings of the reference workflows (upstream: 100 steps; Comfy-Org packaging: 50)
-SAMPLER = "DPM++ 2M"
+# upstream's sampler (FlowDPM-Solver++ 2M) and schedule at CFG 3; upstream samples 100 steps, the ComfyUI packaging 50
+SAMPLER = "Iris DPM++ 2M"
+FALLBACK_SAMPLER = "Euler"
 SCHEDULER = "Iris"
 STEPS = 50
 CFG = 3.0
@@ -43,7 +44,10 @@ def _is_preset_option(key: str) -> bool:
 def register() -> None:
     arch = _add_enum_member(presets.PresetArch, PRESET)
 
-    presets.SAMPLERS[arch] = SAMPLER
+    from modules import sd_samplers
+
+    # without the Iris sampler (it failed to register), Euler: exact first order on a rectified flow
+    presets.SAMPLERS[arch] = SAMPLER if SAMPLER in sd_samplers.all_samplers_map else FALLBACK_SAMPLER
     presets.SCHEDULERS[arch] = SCHEDULER
     presets.STEPS[arch] = STEPS
     presets.CFG[arch] = CFG

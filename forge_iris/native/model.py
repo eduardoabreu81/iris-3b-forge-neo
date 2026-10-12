@@ -21,8 +21,10 @@ class Iris(BASE):
     # rectified flow: the DiT embeds timestep = sigma * 1000; the "Iris" scheduler supplies the sigma grid
     sampling_settings = {"shift": 4.0, "multiplier": 1000}
 
-    # ComfyUI-Iris runs the same weights with memory_usage_factor 0.3
-    memory_usage_factor = 0.3
+    # Forge reserves area x dtype size x 0.02 x factor MB for the activations, and the area of a pixel-space model is
+    # every pixel: 0.3 (envy-ai's ComfyUI-Iris) would set ~12 GB aside per 1024² image and push the DiT out of VRAM.
+    # Nynxz's ComfyUI-Iris runs at 0.05, measured; at 0.05 Forge reserves ~2 GB per 1024² image
+    memory_usage_factor = 0.05
     supported_inference_dtypes = [torch.bfloat16, torch.float16, torch.float32]
 
     unet_extra_config = {}

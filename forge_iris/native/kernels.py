@@ -15,7 +15,7 @@ except ImportError:  # outside Forge Neo: eager backend on CPU
     main_stream_worker = None
     weights_manual_cast = None
 
-__all__ = ["attention", "cast_to", "weight_and_bias"]
+__all__ = ["attention", "cast_to", "rms_norm", "weight_and_bias"]
 
 
 def cast_to(weight, dtype=None, device=None):
@@ -28,12 +28,17 @@ def attention(q, k, v, mask=None, transformer_options=None):
     """q: [B, Hq, S, D]; k, v: [B, Hkv, S, D] (GQA) -> [B, S, Hq * D].
 
     transformer_options reach Forge's attention wrapper, which applies attention overrides such as the Sparse
-    Attention Integrated extension. The torch fallback pins the MATH backend: the CPU flash kernel of
-    torch 2.14 intermittently produces NaNs with GQA under threads, and the tests only need a correct one.
+    Attention Integrated extension. Forge's backends only handle GQA when told (and its flash/sage fallbacks not
+    at all), so the key/value heads are expanded here: query head i reads kv head i // (Hq / Hkv), as SDPA's
+    enable_gqa does. The torch fallback (CPU tests) pins the MATH backend, the plain reference implementation.
     """
     if _forge_attention is not None:
-        return _forge_attention(q, k, v, q.shape[1], mask=mask, skip_reshape=True,
-                                transformer_options=transformer_options or {})
+        if k.shape[1] != q.shape[1]:
+            groups = q.shape[1] // k.shape[1]
+            k, v = k.repeat_interleave(groups, dim=1), v.repeat_interleave(groups, dim=1)
+        # looked up per call: Forge picks its attention function at import time and other extensions may wrap it
+        return _forge_attention.attention_function(q, k, v, q.shape[1], mask=mask, skip_reshape=True,
+                                                   transformer_options=transformer_options or {})
     from torch.nn.attention import SDPBackend, sdpa_kernel
 
     with sdpa_kernel(SDPBackend.MATH):
@@ -50,4 +55,10 @@ def weight_and_bias(layer, ref):
         with main_stream_worker(weight, bias, signal):
             yield weight, bias
         return
-    yield layer.weight.to(ref), layer.bias.to(ref)
+    yield layer.weight.to(ref), (layer.bias.to(ref) if getattr(layer, "bias", None) is not None else None)
+
+
+def rms_norm(layer, x):
+    """layer (an RMSNorm) applied in x's own dtype, whatever the layer's storage, LoRA patches applied."""
+    with weight_and_bias(layer, x) as (weight, _):
+        return torch.nn.functional.rms_norm(x, layer.normalized_shape, weight, layer.eps)

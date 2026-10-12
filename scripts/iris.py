@@ -42,8 +42,28 @@ if ENABLED:
         def show(self, is_img2img):
             return scripts.AlwaysVisible
 
+        def ui(self, is_img2img):
+            if not is_img2img:
+                return []
+            import gradio as gr
+
+            with gr.Accordion("Iris 3B", open=False):
+                mode = gr.Radio(list(iris_script.MODES), value=iris_script.MODE_IMAGE, label="Task",
+                                elem_id="iris_task_mode")
+                gr.Markdown("**Restore x4**: one pass with the upscaler LoRA in the prompt "
+                            "(`<lora:iris-3b-upscaler_r128:1>`) or the upscaler checkpoint; the output is 4x the "
+                            "input. **Depth**: one pass with the Iris depth checkpoint. Both ignore the prompt text, "
+                            "steps and CFG.")
+            return [mode]
+
         def before_process(self, p, *args):
-            iris_script.script_before_process(p)
+            iris_script.script_before_process(p, *args[:1])
 
         def process_before_every_sampling(self, p, *args, **kwargs):
-            iris_script.before_sampling(p, kwargs.get("noise"))
+            iris_script.before_sampling(p, kwargs.get("noise"), kwargs.get("x"))
+
+        def postprocess_image(self, p, pp, *args):
+            iris_script.postprocess_image(p, pp)
+
+        def postprocess(self, p, processed, *args):
+            iris_script.postprocess(p)

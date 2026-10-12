@@ -35,8 +35,7 @@ class IrisEngine(ForgeDiffusionEngine):
                                       k_predictor=self._get_predictor(), config=estimated_config)
 
         self.text_engine_iris = IrisTextEngine(text_encoder=clip.cond_stage_model.qwen3vl_4b,
-                                               tokenizer=clip.tokenizer.qwen3vl_4b,
-                                               dit=unet.model)
+                                               tokenizer=clip.tokenizer.qwen3vl_4b)
 
         self.forge_objects = ForgeObjects(unet=unet, clip=clip, vae=vae, clipvision=None)
         self.forge_objects_original = self.forge_objects.shallow_copy()

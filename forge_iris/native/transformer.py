@@ -5,8 +5,8 @@
 # Layers are plain torch modules: inside Forge's using_forge_operations they become Forge operations (dtype,
 # quantization, offload, LoRA), outside it they stay torch modules for CPU tests. Differences from ComfyUI-Iris:
 # Forge's attention runs through kernels.attention, the fused ck RMSNorm+RoPE path becomes the plain one (same
-# result), ComfyUI's prefetch queue is left out, and forward() receives the text already through preprocess_text
-# (the engine calls it, so the conditioning cache holds the final tensor).
+# result), ComfyUI's prefetch queue is left out, and forward() runs preprocess_text itself on the raw text states
+# (ComfyUI runs it once in extra_conds; Forge has no such hook, so it runs per call, as Forge's Krea 2 text fusion).
 
 import math
 from dataclasses import dataclass
@@ -15,7 +15,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ..contracts import raise_pending_error
+from .. import tasks
+from ..contracts import current_task, raise_pending_error
 from . import kernels
 
 
@@ -28,9 +29,10 @@ class IrisConfig:
     num_kv_heads: int = 5
     patch_size: int = 16
     in_channels: int = 3
-    # absolute widths, never ratios: the INT8 checkpoint zero-pads the SwiGLU FFN to a rotation-group multiple
-    # (6826 -> 6912), and Forge builds from the shapes the detect() reads
+    # absolute widths, never ratios: the INT8 checkpoint zero-pads the trunk's SwiGLU FFN to a rotation-group
+    # multiple (6826 -> 6912) but not the text refiner's, and Forge builds from the shapes the detect() reads
     ffn_hidden_size: int = 6826
+    refiner_ffn_hidden_size: int = 6826
     norm_eps: float = 1e-6
     text_dim: int = 2560
     text_len: int = 300
@@ -171,7 +173,7 @@ class TextRefiner(nn.Module):
     def __init__(self, cfg, **kw):
         super().__init__()
         self.proj = nn.Linear(cfg.text_dim, cfg.hidden_size, **kw)
-        self.blocks = nn.ModuleList([AdapterBlock(cfg.hidden_size, cfg.num_heads, cfg.ffn_hidden_size, cfg.norm_eps, **kw)
+        self.blocks = nn.ModuleList([AdapterBlock(cfg.hidden_size, cfg.num_heads, cfg.refiner_ffn_hidden_size, cfg.norm_eps, **kw)
                                      for _ in range(2)])
         self.norm = nn.RMSNorm(cfg.hidden_size, eps=cfg.norm_eps, **kw)
 
@@ -208,7 +210,8 @@ class SharedBias(nn.Module):
         super().__init__()
         kw.pop("device", None)
         kw.pop("dtype", None)
-        self.bias = nn.Parameter(torch.empty(6 * dim))
+        # zeros, not empty: the checkpoint overwrites it, and garbage memory must never reach a forward
+        self.bias = nn.Parameter(torch.zeros(6 * dim))
 
     def forward(self, modulation):
         return modulation + kernels.cast_to(self.bias, dtype=modulation.dtype, device=modulation.device)
@@ -328,15 +331,20 @@ class PixelBlock(nn.Module):
         self.mlp.fc1 = nn.Linear(dim, cfg.pixel_ffn_hidden_size, **kw)
         self.mlp.fc2 = nn.Linear(cfg.pixel_ffn_hidden_size, dim, **kw)
 
-    def forward(self, x, cond, rope, grid, transformer_options):
+    def forward(self, x, cond, rope, grid, transformer_options, compute=None):
+        """x is the residual stream, kept in its own dtype (float32 under float16 compute, see IrisDiT); the
+        layers run in compute's, the norms in x's."""
+        compute = compute or x.dtype
         count = grid[0] * grid[1]
-        scale1, shift1, scale2, shift2 = self.adaln(cond).reshape(x.shape[0], self.count, -1).chunk(4, -1)
-        compact = self.compress(self.norm1(x).flatten(1)).reshape(-1, count, self.compress.out_features)
+        modulation = self.adaln(cond).to(x.dtype)
+        scale1, shift1, scale2, shift2 = modulation.reshape(x.shape[0], self.count, -1).chunk(4, -1)
+        h = kernels.rms_norm(self.norm1, x).to(compute)
+        compact = self.compress(h.flatten(1)).reshape(-1, count, self.compress.out_features)
         branch = self.attn(compact, rope, transformer_options=transformer_options)
-        branch = self.expand(branch.flatten(0, 1)).reshape_as(x)
+        branch = self.expand(branch.flatten(0, 1)).reshape(x.shape).to(x.dtype)
         x = x + modulate(branch, shift1, scale1)
-        branch = self.mlp.fc2(F.gelu(self.mlp.fc1(self.norm2(x))))
-        return x + modulate(branch, shift2, scale2)
+        branch = self.mlp.fc2(F.gelu(self.mlp.fc1(kernels.rms_norm(self.norm2, x).to(compute))))
+        return x + modulate(branch.to(x.dtype), shift2, scale2)
 
 
 class IrisDiT(nn.Module):
@@ -353,7 +361,7 @@ class IrisDiT(nn.Module):
         self.t_embedder = nn.Module()
         self.t_embedder.mlp = nn.Sequential(nn.Linear(256, cfg.hidden_size), nn.SiLU(), nn.Linear(cfg.hidden_size, cfg.hidden_size))
         self.y_embedder = LayerwiseTextEmbedder(cfg)
-        self.y_pos_embedding = nn.Parameter(torch.empty(1, cfg.text_len, cfg.hidden_size))
+        self.y_pos_embedding = nn.Parameter(torch.zeros(1, cfg.text_len, cfg.hidden_size))
         self.modulation_cores = nn.ModuleDict({f"adaln_{stream}": nn.Linear(cfg.hidden_size, 6 * cfg.hidden_size)
                                                for stream in ("img", "txt")})
         self.blocks = nn.ModuleList([(DualBlock if i < cfg.dual_depth else SingleBlock)(cfg) for i in range(cfg.depth)])
@@ -365,15 +373,30 @@ class IrisDiT(nn.Module):
         self.final_layer.linear = nn.Linear(cfg.pixel_hidden_size, cfg.in_channels)
 
     def preprocess_text(self, context, mask):
-        """Raw Qwen3-VL layer states [B, layers, T, D] with their attention mask [B, T] -> the DiT's text stream
-        [B, T, hidden]. The engine runs this while conditioning, so the pipeline cache holds the final tensor."""
+        """Raw Qwen3-VL layer states [B, T, layers, D] with their attention mask [B, T] -> the DiT's text stream
+        [B, T, hidden]."""
         cfg = self.cfg
         y = self.y_embedder(context[:, :cfg.text_len], mask[:, :cfg.text_len])
         return y + kernels.cast_to(self.y_pos_embedding, dtype=y.dtype, device=y.device)[:, :y.shape[1]]
 
     def forward(self, x, timestep, context, transformer_options={}, **kwargs):
-        """Forge's call: x is the RGB image being denoised in [-1, 1], context the preprocessed text stream."""
+        """Forge's call: x is the RGB image being denoised in [-1, 1]; context the raw text states [B, T, layers, D]
+        from the text engine (pads zeroed, which is where the mask comes from), or an already preprocessed stream
+        [B, T, hidden]."""
         raise_pending_error()
+        if context.ndim == 4:
+            context = self.preprocess_text(context, context.flatten(2).ne(0).any(-1))
+        task = current_task()
+        if task == tasks.RESTORE:
+            # the restore fine-tune only runs on 1024x1024 tiles
+            return tasks.restore_forward(lambda tile: self._forward(tile, timestep, context, transformer_options), x)
+        out = self._forward(x, timestep, context, transformer_options)
+        if task == tasks.DEPTH:
+            # the depth fine-tune outputs the depth itself; Forge takes denoised = x - sigma * out at sigma 1
+            return x - out
+        return out
+
+    def _forward(self, x, timestep, context, transformer_options):
         cfg, p = self.cfg, self.cfg.patch_size
         height, width = x.shape[-2:]
         x = pad_to_patch_size(x, p)
@@ -396,8 +419,14 @@ class IrisDiT(nn.Module):
         pixels = pixels + pixel_position(cfg.pixel_hidden_size, padded_h, padded_w, x.device, pixels.dtype)
         pixels = pixels.reshape(batch, grid[0], p, grid[1], p, -1).permute(0, 1, 3, 2, 4, 5).reshape(batch * count, p * p, -1)
         rope_pix = image_rope(cfg.pixel_attn_hidden_size // cfg.pixel_num_heads, grid, cfg, x.device)
+        # the pixel stage's residual stream outgrows float16 (the depth fine-tune's last block peaks near 4e5, past
+        # float16's 65504, where the trunk stays under 1e4), so under float16 compute it is carried in float32; the
+        # norms bring it back to a small range before every layer
+        compute = pixels.dtype
+        if compute == torch.float16:
+            pixels = pixels.float()
         for block in self.pixel_blocks:
-            pixels = block(pixels, s, rope_pix, grid, transformer_options)
-        out = self.final_layer.linear(self.final_layer.norm(pixels))
+            pixels = block(pixels, s, rope_pix, grid, transformer_options, compute)
+        out = self.final_layer.linear(kernels.rms_norm(self.final_layer.norm, pixels).to(compute))
         folded = out.reshape(batch, count, p * p, cfg.in_channels).permute(0, 3, 2, 1).reshape(batch, -1, count)
         return F.fold(folded, (padded_h, padded_w), kernel_size=p, stride=p)[:, :, :height, :width]

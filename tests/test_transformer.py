@@ -25,8 +25,7 @@ def toy_config(**overrides):
 @unittest.skipIf(torch is None, "torch not installed")
 class TestTransformer(unittest.TestCase):
     def setUp(self):
-        # torch 2.14 CPU: the parallel SDPA kernels intermittently return NaN/different results here;
-        # the toy forward is tiny, so single-threaded costs nothing
+        # the toy forward is tiny, so single-threaded costs nothing and keeps the float order stable
         if torch is not None:
             torch.set_num_threads(1)
 
@@ -68,6 +67,22 @@ class TestTransformer(unittest.TestCase):
         self.assertTrue(bool(torch.isfinite(y).all()))
         clean = dit.preprocess_text(states * mask[:, :, None, None], mask)
         self.assertTrue(torch.allclose(y, clean))
+
+    def test_forward_takes_raw_text_states(self):
+        # the engine's conditioning: raw states (B, T, layers, D) with zeroed pads; forward must recover the mask
+        # from them and match the preprocessed path with the true mask
+        torch.manual_seed(2)
+        config = toy_config()
+        dit = IrisDiT(config).eval()
+        torch.nn.init.normal_(dit.y_pos_embedding)
+        mask = torch.ones(2, 300)
+        mask[0, 40:], mask[1, 120:] = 0, 0
+        states = torch.rand(2, 300, config.text_lap_num_layers, 32) * mask[:, :, None, None]
+        x, t = torch.rand(2, 3, 16, 16) * 2 - 1, torch.tensor([500.0, 500.0])
+        with torch.no_grad():
+            raw = dit(x, t, states)
+            preprocessed = dit(x, t, dit.preprocess_text(states, mask))
+        torch.testing.assert_close(raw, preprocessed)
 
     def test_forward_matches_itself(self):
         # no mutable state between calls; the loose tolerance is for SDPA's thread-order float noise,

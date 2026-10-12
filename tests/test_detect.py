@@ -38,6 +38,9 @@ class TestDetect(unittest.TestCase):
         # exactly the width the checkpoint carries, so the two checkpoints detect different FFN sizes
         self.assertEqual(detect.detect(header("iris-3b_bf16"), "")["ffn_hidden_size"], 6826)
         self.assertEqual(detect.detect(header("iris-3b_int8_convrot"), "")["ffn_hidden_size"], 6912)
+        # only the trunk's: the text refiner keeps 6826 in both
+        for name in CHECKPOINTS:
+            self.assertEqual(detect.detect(header(name), "")["refiner_ffn_hidden_size"], 6826)
 
     def test_key_prefix(self):
         config = detect.detect({f"model.diffusion_model.{k}": v for k, v in header("iris-3b_bf16").items()
