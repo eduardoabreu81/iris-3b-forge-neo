@@ -4,7 +4,7 @@
 
 [![Forge Neo](https://img.shields.io/badge/Forge-Neo-blue)](https://github.com/Haoming02/sd-webui-forge-classic/tree/neo)
 [![Gradio](https://img.shields.io/badge/Gradio-4.40.0-orange)](https://gradio.app/)
-[![Version](https://img.shields.io/badge/Version-0.2.0-brightgreen)](https://github.com/eduardoabreu81/iris-3b-forge-neo)
+[![Version](https://img.shields.io/badge/Version-0.2.1-brightgreen)](https://github.com/eduardoabreu81/iris-3b-forge-neo)
 [![License](https://img.shields.io/badge/License-AGPL--3.0-green.svg)](LICENSE)
 
 > **Extension for [Stable Diffusion WebUI Forge - Neo](https://github.com/Haoming02/sd-webui-forge-classic/tree/neo)**
@@ -30,6 +30,10 @@ Generate with **[Iris 3B](https://huggingface.co/speridlabs/iris-3b)** inside Fo
 ---
 
 ## 🆕 What's New
+
+### v0.2.1 - Works Alongside Other Extensions
+
+- **Plays well with other extensions** - the Forge check no longer breaks when another extension, such as MOSS-Image, loads first and hooks the loader.
 
 ### v0.2.0 - Restoration, Depth and Turbo
 
