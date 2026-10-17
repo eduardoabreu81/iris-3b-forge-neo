@@ -2,6 +2,7 @@
 # Runtime hooks into Forge Neo's loader. Every hook hands anything that is not Iris to the original function
 # untouched; Forge Neo itself stays unchanged. Follows the MiniMax H3 extension's patches.py.
 
+import functools
 import logging
 import os
 import types
@@ -71,6 +72,9 @@ def _hook_detection() -> None:
 def _hook_components() -> None:
     original = loader.load_huggingface_component
 
+    # wraps leaves __wrapped__ behind, which inspect.getsource follows: the compat checks of the other extensions
+    # that read Forge's loader source still reach it through this hook
+    @functools.wraps(original)
     def load_huggingface_component(guess, component_name, lib_name, cls_name, repo_path, state_dict):
         if not isinstance(guess, model.Iris):
             return original(guess, component_name, lib_name, cls_name, repo_path, state_dict)
