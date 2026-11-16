@@ -123,6 +123,7 @@ Generate with **[Iris 3B](https://huggingface.co/speridlabs/iris-3b)** inside Fo
 | Qwen3-VL 4B text encoder | [`qwen3vl_4b_bf16`](https://huggingface.co/Comfy-Org/Qwen3-VL/tree/main/text_encoders) or `qwen3vl_4b_fp8_scaled` | `models/text_encoder` |
 | Turbo LoRA (optional) | [`r2-1000/student.safetensors`](https://huggingface.co/pentacoxian-dev/iris-3b-turbo-lora), renamed to `iris-3b-turbo_r2-1000` | `models/Lora` |
 | Upscaler LoRA (optional) | [`iris-3b-upscaler_r128`](https://huggingface.co/nynxz/iris-3b/tree/main/loras) | `models/Lora` |
+| Turbo checkpoint (optional) | [`iris-3b-turbo_int8_convrot`](https://huggingface.co/eduardoabreu81/iris-3b-turbo) (3.4 GB) or `iris-3b-turbo_bf16` (6.7 GB), with the Turbo LoRA built in: LCM, Iris Turbo schedule, 4 steps, CFG 1 | `models/Stable-diffusion` |
 | Depth checkpoint (optional) | [`iris-3b-depth_bf16`](https://huggingface.co/nynxz/iris-3b) or `iris-3b-depth_int8_convrot` | `models/Stable-diffusion` |
 
 6. Pick the **iris** UI preset, the checkpoint, and the text encoder under **VAE / Text Encoder**
