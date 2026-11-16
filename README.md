@@ -1,3 +1,7 @@
+<p align="center">
+  <img src=".github/banner.jpg" alt="Iris 3B for Forge Neo banner"/>
+</p>
+
 # 🖼️ Iris 3B for Forge Neo
 
 <div align="center">
